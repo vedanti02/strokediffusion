@@ -1,21 +1,10 @@
-from .renderer import NeuralRenderer
-from .dit import (
-    modulate,
-    TimestepEmbedder,
-    ImageEncoder,
-    DiTBlock,
-    HeavyStrokeDiT,
-    VisualStrokeDiT,
-)
+from .renderer import NeuralRenderer, load_renderer
+from .dit import ProgressiveVisualStrokeDiT
 from .losses import PerceptualLoss
 
 __all__ = [
     "NeuralRenderer",
-    "modulate",
-    "TimestepEmbedder",
-    "ImageEncoder",
-    "DiTBlock",
-    "HeavyStrokeDiT",
-    "VisualStrokeDiT",
+    "load_renderer",
+    "ProgressiveVisualStrokeDiT",
     "PerceptualLoss",
 ]

@@ -15,7 +15,7 @@ class PerceptualLoss(nn.Module):
     
     def __init__(self, layers: int = 16):
         super().__init__()
-        vgg = models.vgg16(pretrained=True).features[:layers].eval()
+        vgg = models.vgg16(weights='IMAGENET1K_V1').features[:layers].eval()
         for param in vgg.parameters():
             param.requires_grad = False
         self.vgg = vgg
@@ -35,42 +35,3 @@ class PerceptualLoss(nn.Module):
         pred = (pred - self.mean) / self.std
         target = (target - self.mean) / self.std
         return F.mse_loss(self.vgg(pred), self.vgg(target))
-
-
-class CombinedLoss(nn.Module):
-    """
-    Combined loss for stroke-based painting training.
-    Includes MSE on strokes + perceptual loss on rendered images.
-    """
-    
-    def __init__(self, perceptual_weight: float = 0.25):
-        super().__init__()
-        self.perceptual = PerceptualLoss()
-        self.perceptual_weight = perceptual_weight
-
-    def forward(
-        self,
-        pred_strokes: torch.Tensor,
-        target_strokes: torch.Tensor,
-        pred_image: torch.Tensor,
-        target_image: torch.Tensor
-    ) -> tuple[torch.Tensor, dict]:
-        """
-        Args:
-            pred_strokes: Predicted strokes
-            target_strokes: Ground truth strokes
-            pred_image: Rendered image from pred_strokes
-            target_image: Rendered image from target_strokes
-        Returns:
-            Total loss and dict of individual losses
-        """
-        loss_mse = F.mse_loss(pred_strokes, target_strokes)
-        loss_perceptual = self.perceptual(pred_image, target_image)
-        
-        total = loss_mse + self.perceptual_weight * loss_perceptual
-        
-        return total, {
-            'mse': loss_mse.item(),
-            'perceptual': loss_perceptual.item(),
-            'total': total.item()
-        }

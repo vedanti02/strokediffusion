@@ -1,6 +1,5 @@
 """
-Central configuration for all experiments.
-Modify these values to change model architecture, training params, etc.
+Central configuration for progressive stroke diffusion.
 """
 import torch
 import os
@@ -13,43 +12,38 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # ==========================================
 # PATHS
 # ==========================================
-DATA_PATH = "/content/drive/MyDrive/LearningToPaint/strokes_fixed"
+DATA_PATH = "./baseline/output_pts"
 RENDERER_PATH = "renderer.pkl"
 CHECKPOINT_DIR = "checkpoints"
 
 # ==========================================
+# STROKE REPRESENTATION
+# ==========================================
+# Each stroke has 13 parameters:
+#   - Shape (10): x0, y0, x1, y1, x2, y2, radius0, radius1, w, h
+#   - Color (3): R, G, B
+NUM_STROKES = 100      # Total strokes per painting
+STROKE_DIM = 13        # Parameters per stroke
+
+# ==========================================
 # MODEL ARCHITECTURE
 # ==========================================
-SEQ_LEN = 20           # Number of stroke bundles (each bundle = 5 strokes)
-FEATURE_DIM = 65       # Features per bundle (5 strokes * 13 params)
-TOTAL_STROKES = 100    # Total strokes per painting (SEQ_LEN * 5)
-
-D_MODEL = 768          # Transformer hidden dimension
-NUM_HEADS = 12         # Attention heads
-NUM_LAYERS = 12        # Transformer layers
-MLP_RATIO = 4.0        # MLP expansion ratio
+D_MODEL = 384          # Transformer hidden dimension
+NUM_HEADS = 8          # Attention heads
+NUM_LAYERS = 8         # Transformer layers
 
 # ==========================================
 # TRAINING
 # ==========================================
-BATCH_SIZE = 48
-LEARNING_RATE = 1e-4
-EPOCHS = 500
+BATCH_SIZE = 32
+LEARNING_RATE = 5e-5
+EPOCHS = 300
 NUM_WORKERS = 4
 
 # ==========================================
 # DIFFUSION
 # ==========================================
 DIFFUSION_STEPS = 1000
-BETA_START = 0.0001
-BETA_END = 0.02
-
-# ==========================================
-# LOSS WEIGHTS
-# ==========================================
-PERCEPTUAL_WEIGHT = 0.25
-STROKE_WEIGHT = 1.0
-CFG_DROP_PROB = 0.1    # Classifier-free guidance dropout
 
 # ==========================================
 # RENDERING

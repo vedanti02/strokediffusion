@@ -98,3 +98,4 @@ strokes_fixed/
 *.log
 runs/
 wandb/
+.DS_Store
