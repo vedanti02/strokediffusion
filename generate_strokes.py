@@ -11,7 +11,6 @@ Usage:
 
 Outputs (in baseline/ directory):
     - baseline/output_pts/          : Stroke parameter .pt files (20, 65) -> reshape to (100, 13)
-    - baseline/output_100stroke_imgs/: Generated stroke images
 """
 import os
 import shutil
@@ -21,7 +20,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 # Default dataset location
-DEFAULT_DATASET_DIR = "/Users/vedantikshirsagar/Desktop"
+DEFAULT_DATASET_DIR = "/home/vkshirsa/celeba_temp"
 
 
 def setup_kaggle_credentials():
@@ -54,73 +53,73 @@ def setup_kaggle_credentials():
     return False
 
 
-def download_celeba_dataset(dataset_dir: str = DEFAULT_DATASET_DIR):
-    """
-    Download CelebA dataset from Kaggle.
+# def download_celeba_dataset(dataset_dir: str = DEFAULT_DATASET_DIR):
+#     """
+#     Download CelebA dataset from Kaggle.
     
-    Args:
-        dataset_dir: Directory to download dataset to
+#     Args:
+#         dataset_dir: Directory to download dataset to
         
-    Returns:
-        Path to the image directory
-    """
-    dataset_dir = Path(dataset_dir)
-    dataset_dir.mkdir(parents=True, exist_ok=True)
+#     Returns:
+#         Path to the image directory
+#     """
+#     dataset_dir = Path(dataset_dir)
+#     dataset_dir.mkdir(parents=True, exist_ok=True)
     
-    celeba_dir = dataset_dir / "celeba"
-    img_dir = celeba_dir / "img_align_celeba" / "img_align_celeba"
+#     celeba_dir = dataset_dir / "celeba"
+#     img_dir = celeba_dir / "img_align_celeba" / "img_align_celeba"
     
-    # Check if already downloaded
-    if img_dir.exists() and any(img_dir.glob("*.jpg")):
-        print(f"[OK] CelebA dataset already exists at {img_dir}")
-        return str(img_dir)
+#     # Check if already downloaded
+#     if img_dir.exists() and any(img_dir.glob("*.jpg")):
+#         print(f"[OK] CelebA dataset already exists at {img_dir}")
+#         return str(img_dir)
     
-    print(f"Downloading CelebA dataset to {dataset_dir}...")
+#     print(f"Downloading CelebA dataset to {dataset_dir}...")
     
-    # Check if kaggle is installed
-    try:
-        subprocess.run(["kaggle", "--version"], capture_output=True, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("Installing kaggle CLI...")
-        subprocess.run(["pip", "install", "-q", "kaggle"], check=True)
+#     # Check if kaggle is installed
+#     try:
+#         subprocess.run(["kaggle", "--version"], capture_output=True, check=True)
+#     except (subprocess.CalledProcessError, FileNotFoundError):
+#         print("Installing kaggle CLI...")
+#         subprocess.run(["pip", "install", "-q", "kaggle"], check=True)
     
-    # Set up kaggle credentials from strokediffusion directory
-    setup_kaggle_credentials()
+#     # Set up kaggle credentials from strokediffusion directory
+#     setup_kaggle_credentials()
     
-    # Check for kaggle credentials
-    kaggle_json = Path.home() / ".kaggle" / "kaggle.json"
-    if not kaggle_json.exists():
-        script_dir = Path(__file__).parent
-        print("\n[WARN] Kaggle API key not found!")
-        print(f"Please place kaggle.json in: {script_dir}/")
-        print("\nTo get kaggle.json:")
-        print("  1. Go to https://www.kaggle.com/account")
-        print("  2. Click 'Create New API Token' to download kaggle.json")
-        print(f"  3. Copy it to: {script_dir}/kaggle.json")
-        raise FileNotFoundError(f"Kaggle API key not found. Place kaggle.json in {script_dir}/")
+#     # Check for kaggle credentials
+#     kaggle_json = Path.home() / ".kaggle" / "kaggle.json"
+#     if not kaggle_json.exists():
+#         script_dir = Path(__file__).parent
+#         print("\n[WARN] Kaggle API key not found!")
+#         print(f"Please place kaggle.json in: {script_dir}/")
+#         print("\nTo get kaggle.json:")
+#         print("  1. Go to https://www.kaggle.com/account")
+#         print("  2. Click 'Create New API Token' to download kaggle.json")
+#         print(f"  3. Copy it to: {script_dir}/kaggle.json")
+#         raise FileNotFoundError(f"Kaggle API key not found. Place kaggle.json in {script_dir}/")
     
-    # Download dataset
-    zip_path = dataset_dir / "celeba-dataset.zip"
-    if not zip_path.exists():
-        print("Downloading from Kaggle (this may take a while, ~1.3GB)...")
-        subprocess.run(
-            ["kaggle", "datasets", "download", "-d", "jessicali9530/celeba-dataset", "-p", str(dataset_dir)],
-            check=True
-        )
+#     # Download dataset
+#     zip_path = dataset_dir / "celeba-dataset.zip"
+#     if not zip_path.exists():
+#         print("Downloading from Kaggle (this may take a while, ~1.3GB)...")
+#         subprocess.run(
+#             ["kaggle", "datasets", "download", "-d", "jessicali9530/celeba-dataset", "-p", str(dataset_dir)],
+#             check=True
+#         )
     
-    # Extract
-    if not celeba_dir.exists():
-        print("Extracting dataset...")
-        subprocess.run(
-            ["unzip", "-q", str(zip_path), "-d", str(celeba_dir)],
-            check=True
-        )
+#     # Extract
+#     if not celeba_dir.exists():
+#         print("Extracting dataset...")
+#         subprocess.run(
+#             ["unzip", "-q", str(zip_path), "-d", str(celeba_dir)],
+#             check=True
+#         )
     
-    # Clean up zip file (optional, comment out to keep)
-    zip_path.unlink()
+#     # Clean up zip file (optional, comment out to keep)
+#     zip_path.unlink()
     
-    print(f"CelebA dataset downloaded to {img_dir}")
-    return str(img_dir)
+#     print(f"CelebA dataset downloaded to {img_dir}")
+#     return str(img_dir)
 
 
 def download_models(model_dir: str = "."):
@@ -213,7 +212,6 @@ def generate_strokes(
     
     Outputs are saved to:
         - output_pts/: Stroke parameter .pt files
-        - output_100stroke_imgs/: Generated stroke images
     """
     # Verify paths exist
     if not os.path.exists(img_dir):
@@ -235,11 +233,9 @@ def generate_strokes(
     
     # Output directories (created by test.py in its working directory)
     output_pts_dir = working_dir / "output_pts"
-    output_imgs_dir = working_dir / "output_100stroke_imgs"
     
     # Create output directories
     os.makedirs(output_pts_dir, exist_ok=True)
-    os.makedirs(output_imgs_dir, exist_ok=True)
     
     # Get image list
     images = get_image_list(img_dir)
@@ -299,7 +295,6 @@ def generate_strokes(
     print(f"  - Skipped (existing): {skip_count}")
     print(f"  - Errors: {error_count}")
     print(f"  - Stroke files: {output_pts_dir}")
-    print(f"  - Generated images: {output_imgs_dir}")
     print(f"\nNote: Each .pt file is shape (20, 65). Reshape to (100, 13) for model input:")
     print(f"  strokes = torch.load('file.pt').view(-1, 13)  # -> (100, 13)")
 
@@ -328,7 +323,6 @@ Default paths:
 
 Output directories (created in baseline/):
     - baseline/output_pts/           : Stroke parameter .pt files
-    - baseline/output_100stroke_imgs/: Generated stroke images
         """
     )
     

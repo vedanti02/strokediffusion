@@ -140,7 +140,6 @@ img = img.reshape(1, width, width, 3)
 img = np.transpose(img, (0, 3, 1, 2))
 img = torch.tensor(img).to(device).float() / 255.
 
-os.system('mkdir output')
 os.makedirs("output_pts", exist_ok=True)
 actions_over_time = []   
 
@@ -184,10 +183,3 @@ actions_stacked = torch.stack(actions_over_time, dim=0)
 img_name = os.path.splitext(os.path.basename(args.img))[0]
 torch.save(actions_stacked, f"output_pts/{img_name}.pt")
 print(f"Saved actions for {img_name}: {actions_stacked.shape}")
-
-final_img_dir = "output_100stroke_imgs"
-os.makedirs(final_img_dir, exist_ok=True)
-last_gen_path = f"output/generated{args.imgid - 1}.png"
-out_name = f"{img_name}_generated.png"
-shutil.copy2(last_gen_path, os.path.join(final_img_dir, out_name))
-print(f"Saved final image -> {final_img_dir}/{out_name}")
