@@ -21,6 +21,8 @@ import math
 import os
 from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
 from tqdm import tqdm
+from torchvision.utils import save_image
+import sys
 
 from src.config import (
     DEVICE, DATA_PATH, RENDERER_PATH,
@@ -228,9 +230,11 @@ def train(
     for epoch in range(start_epoch, epochs):
         model.train()
         epoch_loss = 0
+        epoch_stroke_loss = 0.0
+        epoch_perceptual_loss = 0.0
         optimizer.zero_grad()
         
-        pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{epochs}", leave=False)
+        pbar = tqdm(dataloader, leave=False, file=sys.stdout, disable=True)
         
         for batch_idx, clean_strokes in enumerate(pbar):
             # clean_strokes: (B, NUM_STROKES, 13) in [-1, 1]
@@ -304,29 +308,53 @@ def train(
                 optimizer.zero_grad()
                 if USE_EMA:
                     ema_model.update_parameters(model)
-            
+
+            # accumulate losses for epoch-level reporting (no per-batch prints)
             epoch_loss += total_loss.item() * GRADIENT_ACCUMULATION_STEPS
-            pbar.set_postfix({'loss': f"{stroke_loss.item():.4f}"})
+            epoch_stroke_loss += stroke_loss.item() * GRADIENT_ACCUMULATION_STEPS
+            epoch_perceptual_loss += perceptual_loss.item() * GRADIENT_ACCUMULATION_STEPS
         
+        # end-of-epoch LR update
         scheduler_lr.step()
-        avg_loss = epoch_loss / len(dataloader)
-        print(f"Epoch {epoch} | Loss: {avg_loss:.5f} | LR: {scheduler_lr.get_last_lr()[0]:.2e}")
-        
-        # Save
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-            torch.save({
-                'model_state_dict': model.state_dict(),
-                'epoch': epoch,
-                'loss': best_loss
-            }, os.path.join(save_dir, "best_model.pth"))
-            print(f"   [OK] Best model saved! Loss: {best_loss:.6f}")
-        
-        if (epoch + 1) % 50 == 0:
-            torch.save({
-                'model_state_dict': model.state_dict(),
-                'epoch': epoch
-            }, os.path.join(save_dir, f"epoch_{epoch+1}.pth"))
+
+        num_batches = len(dataloader)
+        avg_loss = epoch_loss / num_batches
+        avg_stroke = epoch_stroke_loss / num_batches
+        avg_percept = epoch_perceptual_loss / num_batches
+
+
+        # --- Printing / viz: ONLY when the epoch completed with 313 batches ---
+        # This ensures a single, concise line appears in the SLURM stdout (.log).
+        if num_batches == 313:
+            # Print detailed epoch summary to STDOUT (goes to .log)
+            print(
+                f"Epoch {epoch+1} ({num_batches}/{num_batches}) | Total: {avg_loss:.5f} | Stroke: {avg_stroke:.5f} | Perceptual: {avg_percept:.5f} | LR: {scheduler_lr.get_last_lr()[0]:.2e}",
+                file=sys.stdout,
+                flush=True
+            )
+
+            # Save visualization at the same point (best-effort)
+            model_to_use = ema_model.module if (USE_EMA and hasattr(ema_model, 'module')) else (ema_model if USE_EMA else model)
+            _save_epoch_visual(epoch, model_to_use, renderer, dataloader, save_dir, DEVICE)
+
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                torch.save({
+                    'model_state_dict': model.state_dict(),
+                    'epoch': epoch,
+                    'loss': best_loss
+                }, os.path.join(save_dir, "best_model.pth"))
+                print(f"[OK] New best model saved with loss: {best_loss:.6f}", flush=True)
+
+        # --- Also: save a visualization every 20 epochs (best-effort) ---
+        if (epoch + 1) % 20 == 0:
+            try:
+                model_to_use = ema_model.module if (USE_EMA and hasattr(ema_model, 'module')) else (ema_model if USE_EMA else model)
+                _save_epoch_visual(epoch, model_to_use, renderer, dataloader, save_dir, DEVICE)
+            except Exception:
+                pass
+
+        # Otherwise remain silent (no per-epoch prints)
     
     # Save EMA model
     if USE_EMA:

@@ -99,3 +99,7 @@ strokes_fixed/
 runs/
 wandb/
 .DS_Store
+logs/
+renderer.pkl
+run_strokes.sh
+train.sh

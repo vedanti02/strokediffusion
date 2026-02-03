@@ -10,7 +10,7 @@ Usage:
     python generate_strokes.py --img_dir /path/to/celeba/images
 
 Outputs (in baseline/ directory):
-    - baseline/output_pts/          : Stroke parameter .pt files (20, 65) -> reshape to (100, 13)
+    - /home/vkshirsa/strokediffusion_outputs/ : Stroke parameter .pt files (20, 65) -> reshape to (100, 13)
 """
 import os
 import shutil
@@ -194,7 +194,8 @@ def generate_strokes(
     start_idx: int = 0,
     end_idx: int = None,
     skip_existing: bool = True,
-    working_dir: str = None
+    working_dir: str = None,
+    output_dir: str = "/home/vkshirsa/strokediffusion_outputs"
 ):
     """
     Generate stroke parameters for images in a directory.
@@ -322,7 +323,7 @@ Default paths:
     - Models: ./actor.pkl, ./renderer.pkl
 
 Output directories (created in baseline/):
-    - baseline/output_pts/           : Stroke parameter .pt files
+    - /home/vkshirsa/strokediffusion_outputs/ : Stroke parameter .pt files
         """
     )
     
@@ -336,6 +337,7 @@ Output directories (created in baseline/):
     parser.add_argument("--start_idx", type=int, default=0, help="Start index in image list (for resuming)")
     parser.add_argument("--end_idx", type=int, default=None, help="End index in image list (default: all)")
     parser.add_argument("--no_skip", action="store_true", help="Don't skip existing output files (reprocess all)")
+    parser.add_argument("--output_dir", type=str, default="/home/vkshirsa/strokediffusion_outputs", help="Directory to save generated .pt stroke files (default: /home/vkshirsa/strokediffusion_outputs)")
     parser.add_argument("--download_models", action="store_true", help="Download pretrained actor and renderer models")
     parser.add_argument("--download_dataset", action="store_true", help="Download CelebA dataset from Kaggle")
     
@@ -372,7 +374,9 @@ Output directories (created in baseline/):
         divide=args.divide,
         start_idx=args.start_idx,
         end_idx=args.end_idx,
-        skip_existing=not args.no_skip
+        skip_existing=not args.no_skip,
+        output_dir=args.output_dir,
+        working_dir=working_dir
     )
 
 

@@ -12,7 +12,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # ==========================================
 # PATHS
 # ==========================================
-DATA_PATH = "./baseline/output_pts"
+DATA_PATH = "/home/vkshirsa/strokediffusion_outputs"
 RENDERER_PATH = "renderer.pkl"
 CHECKPOINT_DIR = "checkpoints"
 
