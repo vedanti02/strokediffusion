@@ -1,29 +1,13 @@
-"""
-Progressive Stroke Diffusion Training with VisualStrokeDiT
-
-Key Idea:
-- Strokes are generated progressively in groups (20 groups x 5 strokes = 100 total)
-- Each group is conditioned on the ACCUMULATED painting from previous strokes
-- Uses ProgressiveVisualStrokeDiT (extends VisualStrokeDiT with group embedding)
-
-Training:
-- For each group k (out of 20):
-  1. Render strokes from groups 0..k-1 → get canvas_k
-  2. Add diffusion noise to group k's strokes
-  3. Model predicts clean group k strokes given (noisy_strokes_k, t, canvas_k, group_idx=k)
-
-Like a painter: paint → look at canvas → paint next meaningful stroke
-"""
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
 import math
 import os
-from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
-from tqdm import tqdm
-from torchvision.utils import save_image
 import sys
+from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
+from torchvision.utils import save_image
 
+# Assume these exist in your project structure
 from src.config import (
     DEVICE, DATA_PATH, RENDERER_PATH,
     NUM_STROKES, STROKE_DIM, D_MODEL, NUM_HEADS, NUM_LAYERS,
@@ -37,8 +21,8 @@ from src.data import get_dataloader
 # ==========================================
 # CONFIGURATION
 # ==========================================
-NUM_GROUPS = 20           # 20 groups of 5 strokes = 100 total
-STROKES_PER_GROUP = 5     # 5 strokes per group
+NUM_GROUPS = 20           
+STROKES_PER_GROUP = 5     
 
 USE_EMA = True
 EMA_DECAY = 0.999
@@ -46,7 +30,6 @@ USE_AMP = True
 GRADIENT_ACCUMULATION_STEPS = 2
 PERCEPTUAL_WEIGHT = 0.25
 STROKE_WEIGHT = 1.0
-
 
 # ==========================================
 # DIFFUSION SCHEDULER
@@ -64,12 +47,10 @@ class DiffusionScheduler:
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - self.alphas_cumprod)
     
     def add_noise(self, original, t):
-        """Add noise to original data at timestep t."""
         noise = torch.randn_like(original)
         sqrt_alpha = self.sqrt_alphas_cumprod[t]
         sqrt_one_minus = self.sqrt_one_minus_alphas_cumprod[t]
         
-        # Handle different batch shapes
         while sqrt_alpha.dim() < original.dim():
             sqrt_alpha = sqrt_alpha.unsqueeze(-1)
             sqrt_one_minus = sqrt_one_minus.unsqueeze(-1)
@@ -77,31 +58,16 @@ class DiffusionScheduler:
         noisy = sqrt_alpha * original + sqrt_one_minus * noise
         return noisy, noise
 
-
 # ==========================================
 # RENDERING UTILITIES
 # ==========================================
 def render_strokes_progressive(all_strokes, renderer, up_to_group, canvas_size=128):
-    """
-    Render strokes from groups 0 to up_to_group-1.
-    
-    Args:
-        all_strokes: (B, NUM_STROKES, 13) all strokes in [0, 1]
-        renderer: Neural renderer
-        up_to_group: Render groups 0..up_to_group-1
-        
-    Returns:
-        canvas: (B, 3, H, W) rendered image
-    """
     B = all_strokes.shape[0]
     canvas = torch.ones(B, 3, canvas_size, canvas_size, device=all_strokes.device)
+    if up_to_group == 0: return canvas
     
-    if up_to_group == 0:
-        return canvas  # Blank canvas for first group
-    
-    # Render strokes from groups 0 to up_to_group-1
     num_strokes_to_render = up_to_group * STROKES_PER_GROUP
-    strokes_to_render = all_strokes[:, :num_strokes_to_render, :]  # (B, N, 13)
+    strokes_to_render = all_strokes[:, :num_strokes_to_render, :]
     
     strokes_to_render = torch.clamp(strokes_to_render, 0, 1)
     shape_params = strokes_to_render[:, :, :10].reshape(-1, 10)
@@ -112,28 +78,72 @@ def render_strokes_progressive(all_strokes, renderer, up_to_group, canvas_size=1
     
     for i in range(num_strokes_to_render):
         canvas = canvas * (1 - alphas[:, i]) + colors[:, i] * alphas[:, i]
-    
     return canvas
 
-
 def render_all_strokes(strokes, renderer, canvas_size=128, num_strokes=100):
-    """Render all strokes at once."""
     B = strokes.shape[0]
     strokes = torch.clamp(strokes, 0, 1)
-    
     strokes = strokes.view(B, num_strokes, 13)
     shape_params = strokes[:, :, :10].reshape(-1, 10)
     color_params = strokes[:, :, 10:]
-    
     alphas = renderer(shape_params).view(B, num_strokes, 1, canvas_size, canvas_size)
     canvas = torch.ones(B, 3, canvas_size, canvas_size, device=strokes.device)
     colors = color_params.view(B, num_strokes, 3, 1, 1)
-    
     for i in range(num_strokes):
         canvas = canvas * (1 - alphas[:, i]) + colors[:, i] * alphas[:, i]
-    
     return canvas
 
+# ==========================================
+# VISUALIZATION UTILS
+# ==========================================
+def _save_epoch_visual(epoch, model, renderer, dataloader, save_dir, device):
+    """
+    Saves a visualization: [Context | Prediction | Ground Truth]
+    """
+    model.eval()
+    with torch.no_grad():
+        try:
+            # Get a small batch (8 images max)
+            clean_strokes = next(iter(dataloader))
+            clean_strokes = clean_strokes.to(device)[:8] 
+        except Exception:
+            return
+
+        B = clean_strokes.shape[0]
+        
+        # Visualize Group 10 (Middle of process)
+        group_idx_val = 10 
+        group_idx = torch.full((B,), group_idx_val, device=device, dtype=torch.long)
+        
+        # Context
+        clean_01 = torch.clamp((clean_strokes + 1) / 2, 0, 1)
+        canvas = render_strokes_progressive(clean_01, renderer, group_idx_val, CANVAS_SIZE)
+        
+        # Target Group
+        start = group_idx_val * STROKES_PER_GROUP
+        end = start + STROKES_PER_GROUP
+        target_group = clean_strokes[:, start:end, :]
+        
+        # Noisy Input
+        noise = torch.randn_like(target_group)
+        t = torch.full((B,), 500, device=device, dtype=torch.long)
+        noisy_group = 0.7 * target_group + 0.7 * noise 
+        
+        # Predict
+        pred_strokes = model(noisy_group, t, canvas, group_idx)
+        
+        # Render Prediction
+        full_pred_strokes = clean_01.clone()
+        pred_01 = torch.clamp((pred_strokes + 1) / 2, 0, 1)
+        full_pred_strokes[:, start:end, :] = pred_01
+        
+        pred_img = render_all_strokes(full_pred_strokes, renderer, CANVAS_SIZE, NUM_STROKES)
+        gt_img = render_all_strokes(clean_01, renderer, CANVAS_SIZE, NUM_STROKES)
+        
+        # Stack & Save
+        combined = torch.cat([canvas, pred_img, gt_img], dim=3)
+        save_path = os.path.join(save_dir, f"epoch_{epoch+1}_visual.jpg")
+        save_image(combined, save_path, nrow=2, normalize=True)
 
 # ==========================================
 # TRAINING
@@ -152,7 +162,6 @@ def train(
     
     save_dir = get_save_dir("progressive_dit")
     
-    # --- LOAD RENDERER ---
     print("Loading renderer...")
     try:
         renderer = load_renderer(RENDERER_PATH, DEVICE)
@@ -161,7 +170,6 @@ def train(
         print(f"[WARN] Renderer not found: {e}")
         return
     
-    # --- SETUP DATA ---
     print(f"Loading data from: {data_path}")
     dataloader = get_dataloader(
         data_path, 
@@ -170,11 +178,7 @@ def train(
         stroke_dim=STROKE_DIM
     )
     
-    # --- SETUP MODEL ---
     print(f"\nModel: ProgressiveVisualStrokeDiT")
-    print(f"  - {NUM_GROUPS} groups x {STROKES_PER_GROUP} strokes = {NUM_STROKES} total")
-    print(f"  - d_model={D_MODEL}, heads={NUM_HEADS}, layers={NUM_LAYERS}")
-    
     model = ProgressiveVisualStrokeDiT(
         stroke_dim=STROKE_DIM,
         strokes_per_group=STROKES_PER_GROUP,
@@ -184,10 +188,6 @@ def train(
         num_layers=NUM_LAYERS
     ).to(DEVICE)
     
-    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"  - Parameters: {num_params:,}")
-    
-    # Resume
     start_epoch = 0
     if resume_from and os.path.exists(resume_from):
         checkpoint = torch.load(resume_from, map_location=DEVICE)
@@ -198,72 +198,45 @@ def train(
             model.load_state_dict(checkpoint)
         print(f"[OK] Resumed from: {resume_from}")
     
-    # --- LOSSES ---
     perceptual_criterion = PerceptualLoss().to(DEVICE)
-    
-    # --- OPTIMIZER ---
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
     scheduler_lr = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, eta_min=1e-6)
-    
-    # --- EMA ---
     ema_model = AveragedModel(model, multi_avg_fn=get_ema_multi_avg_fn(EMA_DECAY)) if USE_EMA else None
-    
-    # --- AMP ---
     scaler = torch.amp.GradScaler('cuda', enabled=USE_AMP)
-    
-    # --- DIFFUSION ---
     diff_sched = DiffusionScheduler(device=DEVICE)
     
-    print(f"\nTraining config:")
-    print(f"  - Data: {len(dataloader.dataset)} samples")
-    print(f"  - Batch size: {batch_size}")
-    print(f"  - Epochs: {epochs}")
-    print(f"  - Output: {save_dir}")
-    print()
-    print("Training: For each batch, randomly pick group k,")
-    print("render groups 0..k-1, then train diffusion on group k.")
-    print()
+    print(f"Training started on {DEVICE}...")
     
     best_loss = float('inf')
     
-    # --- TRAINING LOOP ---
     for epoch in range(start_epoch, epochs):
         model.train()
-        epoch_loss = 0
+        epoch_loss = 0.0
         epoch_stroke_loss = 0.0
         epoch_perceptual_loss = 0.0
         optimizer.zero_grad()
         
-        pbar = tqdm(dataloader, leave=False, file=sys.stdout, disable=True)
-        
-        for batch_idx, clean_strokes in enumerate(pbar):
-            # clean_strokes: (B, NUM_STROKES, 13) in [-1, 1]
+        # Iterate silently (NO tqdm)
+        for batch_idx, clean_strokes in enumerate(dataloader):
             clean_strokes = clean_strokes.to(DEVICE)
             B = clean_strokes.shape[0]
-            
-            # Convert to [0, 1] for rendering
             clean_strokes_01 = torch.clamp((clean_strokes + 1) / 2, 0, 1)
             
-            # Randomly pick which group to train on for each sample
             group_idx = torch.randint(0, NUM_GROUPS, (B,), device=DEVICE)
             
-            # Get the strokes for this group: (B, STROKES_PER_GROUP, 13)
             group_strokes_list = []
             for i in range(B):
                 g = group_idx[i].item()
                 start = g * STROKES_PER_GROUP
                 end = start + STROKES_PER_GROUP
-                group_strokes_list.append(clean_strokes[i, start:end, :])  # (5, 13)
-            group_strokes = torch.stack(group_strokes_list)  # (B, 5, 13) in [-1, 1]
+                group_strokes_list.append(clean_strokes[i, start:end, :])
+            group_strokes = torch.stack(group_strokes_list)
             
-            # Diffusion timestep
             t = torch.randint(0, 1000, (B,), device=DEVICE).long()
             
             with torch.amp.autocast('cuda', enabled=USE_AMP):
-                # Add noise to this group's strokes
-                noisy_group, _ = diff_sched.add_noise(group_strokes, t)  # (B, 5, 13)
+                noisy_group, _ = diff_sched.add_noise(group_strokes, t)
                 
-                # Render canvas from previous groups (groups 0..k-1)
                 with torch.no_grad():
                     canvas_list = []
                     for i in range(B):
@@ -274,15 +247,13 @@ def train(
                             canvas_size=CANVAS_SIZE
                         )
                         canvas_list.append(c)
-                    canvas = torch.cat(canvas_list, dim=0)  # (B, 3, 128, 128)
+                    canvas = torch.cat(canvas_list, dim=0)
                 
-                # Model predicts clean strokes for this group
-                predicted_group = model(noisy_group, t, canvas, group_idx)  # (B, 5, 13)
+                predicted_group = model(noisy_group, t, canvas, group_idx)
                 
-                # Stroke MSE loss
                 stroke_loss = F.mse_loss(predicted_group, group_strokes)
                 
-                # Perceptual loss: render predicted vs target (full painting)
+                # Perceptual Loss Calculation
                 full_predicted = clean_strokes_01.clone()
                 for i in range(B):
                     g = group_idx[i].item()
@@ -294,7 +265,6 @@ def train(
                 target_rendered = render_all_strokes(clean_strokes_01, renderer, CANVAS_SIZE, NUM_STROKES)
                 perceptual_loss = perceptual_criterion(pred_rendered, target_rendered)
                 
-                # Total loss
                 total_loss = STROKE_WEIGHT * stroke_loss + PERCEPTUAL_WEIGHT * perceptual_loss
                 total_loss = total_loss / GRADIENT_ACCUMULATION_STEPS
             
@@ -309,60 +279,46 @@ def train(
                 if USE_EMA:
                     ema_model.update_parameters(model)
 
-            # accumulate losses for epoch-level reporting (no per-batch prints)
+            # Accumulate (Need to multiply back by steps because loss is averaged)
             epoch_loss += total_loss.item() * GRADIENT_ACCUMULATION_STEPS
-            epoch_stroke_loss += stroke_loss.item() * GRADIENT_ACCUMULATION_STEPS
-            epoch_perceptual_loss += perceptual_loss.item() * GRADIENT_ACCUMULATION_STEPS
+            epoch_stroke_loss += stroke_loss.item() 
+            epoch_perceptual_loss += perceptual_loss.item() 
         
-        # end-of-epoch LR update
+        # End of Epoch
         scheduler_lr.step()
-
         num_batches = len(dataloader)
         avg_loss = epoch_loss / num_batches
         avg_stroke = epoch_stroke_loss / num_batches
         avg_percept = epoch_perceptual_loss / num_batches
 
+        # --- ONE LOG LINE PER EPOCH ---
+        print(
+            f"Epoch {epoch+1}/{epochs} | Total: {avg_loss:.5f} | Stroke: {avg_stroke:.5f} | Percept: {avg_percept:.5f} | LR: {scheduler_lr.get_last_lr()[0]:.2e}",
+            file=sys.stdout,
+            flush=True
+        )
 
-        # --- Printing / viz: ONLY when the epoch completed with 313 batches ---
-        # This ensures a single, concise line appears in the SLURM stdout (.log).
-        if num_batches == 313:
-            # Print detailed epoch summary to STDOUT (goes to .log)
-            print(
-                f"Epoch {epoch+1} ({num_batches}/{num_batches}) | Total: {avg_loss:.5f} | Stroke: {avg_stroke:.5f} | Perceptual: {avg_percept:.5f} | LR: {scheduler_lr.get_last_lr()[0]:.2e}",
-                file=sys.stdout,
-                flush=True
-            )
-
-            # Save visualization at the same point (best-effort)
+        # --- SAVE VISUALIZATION EVERY 20 EPOCHS ---
+        if (epoch + 1) % 20 == 0:
             model_to_use = ema_model.module if (USE_EMA and hasattr(ema_model, 'module')) else (ema_model if USE_EMA else model)
             _save_epoch_visual(epoch, model_to_use, renderer, dataloader, save_dir, DEVICE)
 
-            if avg_loss < best_loss:
-                best_loss = avg_loss
-                torch.save({
-                    'model_state_dict': model.state_dict(),
-                    'epoch': epoch,
-                    'loss': best_loss
-                }, os.path.join(save_dir, "best_model.pth"))
-                print(f"[OK] New best model saved with loss: {best_loss:.6f}", flush=True)
+        # --- SAVE CHECKPOINT IF BEST ---
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save({
+                'model_state_dict': model.state_dict(),
+                'epoch': epoch,
+                'loss': best_loss
+            }, os.path.join(save_dir, "best_model.pth"))
+            # Optional: print helper to confirm save without spamming
+            # print(f"   [Saved Best Model]", flush=True)
 
-        # --- Also: save a visualization every 20 epochs (best-effort) ---
-        if (epoch + 1) % 20 == 0:
-            try:
-                model_to_use = ema_model.module if (USE_EMA and hasattr(ema_model, 'module')) else (ema_model if USE_EMA else model)
-                _save_epoch_visual(epoch, model_to_use, renderer, dataloader, save_dir, DEVICE)
-            except Exception:
-                pass
-
-        # Otherwise remain silent (no per-epoch prints)
-    
-    # Save EMA model
     if USE_EMA:
         torch.save({
             'model_state_dict': ema_model.module.state_dict(),
             'epoch': epochs
         }, os.path.join(save_dir, "ema_model.pth"))
-        print(f"[OK] EMA model saved")
     
     print(f"\n[OK] Training Complete! Best loss: {best_loss:.6f}")
 
