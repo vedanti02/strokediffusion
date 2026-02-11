@@ -13,6 +13,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # PATHS
 # ==========================================
 DATA_PATH = "/home/vkshirsa/strokediffusion_outputs"
+IMAGE_PATH = "/home/vkshirsa/celeba_temp/celeba/img_align_celeba/img_align_celeba"
 RENDERER_PATH = "renderer.pkl"
 CHECKPOINT_DIR = "checkpoints"
 
@@ -49,6 +50,12 @@ DIFFUSION_STEPS = 1000
 # RENDERING
 # ==========================================
 CANVAS_SIZE = 128
+
+# ==========================================
+# CLASSIFIER-FREE GUIDANCE
+# ==========================================
+CFG_DROPOUT = 0.15      # Prob of dropping target image during training
+CFG_SCALE = 3.0          # Guidance scale for unconditional inference
 
 # ==========================================
 # HELPER FUNCTIONS
